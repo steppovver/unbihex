@@ -814,32 +814,57 @@ fn show_window(app: &AppHandle) {
 
 #[cfg(windows)]
 fn show_windows_window(app: &AppHandle) {
+    window_diagnostic(app, "show requested");
     static WINDOW_CREATION: std::sync::Mutex<()> = std::sync::Mutex::new(());
     let Ok(_guard) = WINDOW_CREATION.try_lock() else {
         return;
     };
     let Some(config) = app.config().app.windows.iter().find(|w| w.label == "main") else {
+        window_diagnostic(app, "main window config missing");
         return;
     };
     if let Some(window) = app.get_webview_window("main") {
-        let _ = window.unminimize();
-        let _ = window.show();
-        let _ = window.set_focus();
+        window_diagnostic(app, &format!("unminimize: {:?}", window.unminimize()));
+        window_diagnostic(app, &format!("show: {:?}", window.show()));
+        window_diagnostic(app, &format!("focus: {:?}", window.set_focus()));
         return;
     }
 
     // Tauri 2.12 waits for WebView2 before registering the window.
     for delay in [0, 2, 8] {
         std::thread::sleep(Duration::from_secs(delay));
+        window_diagnostic(app, "creating main window");
         match tauri::WebviewWindowBuilder::from_config(app, config).and_then(|b| b.build()) {
             Ok(window) => {
-                let _ = window.set_focus();
+                window_diagnostic(app, &format!("focus: {:?}", window.set_focus()));
                 return;
             }
-            Err(e) => tracing::warn!("could not create the main window: {e}"),
+            Err(e) => {
+                window_diagnostic(app, &format!("window creation failed: {e}"));
+                tracing::warn!("could not create the main window: {e}");
+            }
         }
     }
     tracing::error!("could not open the main window after WebView2 startup attempts");
+}
+
+#[cfg(windows)]
+fn window_diagnostic(app: &AppHandle, message: &str) {
+    use std::io::Write;
+
+    if let Ok(dir) = app.path().app_data_dir()
+        && let Ok(mut file) = std::fs::OpenOptions::new()
+            .create(true)
+            .append(true)
+            .open(dir.join("window-diagnostic.log"))
+    {
+        let _ = writeln!(
+            file,
+            "{:?} pid={} {message}",
+            std::time::SystemTime::now(),
+            std::process::id()
+        );
+    }
 }
 
 #[cfg(any(all(desktop, not(windows)), target_os = "android"))]

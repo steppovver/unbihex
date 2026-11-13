@@ -90,6 +90,43 @@ fn filter(level: &str) -> EnvFilter {
 
 /// Installs the global subscriber.
 pub fn init(level: &str) -> (LogBuffer, Option<LevelHandle>) {
+    #[cfg(windows)]
+    {
+        struct WindowLogger;
+
+        impl log::Log for WindowLogger {
+            fn enabled(&self, metadata: &log::Metadata<'_>) -> bool {
+                metadata.target().starts_with("tauri_runtime_wry")
+                    && metadata.level() <= log::Level::Warn
+            }
+
+            fn log(&self, record: &log::Record<'_>) {
+                if !self.enabled(record.metadata()) {
+                    return;
+                }
+                if let Some(root) = std::env::var_os("APPDATA") {
+                    let path = std::path::PathBuf::from(root)
+                        .join("com.unbihex.client")
+                        .join("window-diagnostic.log");
+                    if let Ok(mut file) = std::fs::OpenOptions::new().create(true).append(true).open(path) {
+                        let _ = writeln!(
+                            file,
+                            "pid={} runtime {}: {}",
+                            std::process::id(),
+                            record.level(),
+                            record.args()
+                        );
+                    }
+                }
+            }
+
+            fn flush(&self) {}
+        }
+        static LOGGER: WindowLogger = WindowLogger;
+        if log::set_logger(&LOGGER).is_ok() {
+            log::set_max_level(log::LevelFilter::Warn);
+        }
+    }
     let buffer = LogBuffer::default();
     let (layer, handle) = reload::Layer::new(filter(level));
     let fmt = tracing_subscriber::fmt::layer()
